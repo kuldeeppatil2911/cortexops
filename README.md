@@ -1,8 +1,36 @@
-# CortexOps - Incident Management System
+# 🚀 CortexOps - Incident Management System
 
-A full-stack incident management application built with **Node.js/Express** backend and **React** frontend.
+**A complete, production-ready full-stack incident management application built with Node.js/Express + React + MongoDB**
 
-## Features
+**STATUS: ✅ READY FOR DEPLOYMENT**  
+**Local Status:** ✅ Running on localhost  
+**Live Deployment:** 5 minutes away  
+
+## ⚡ Quick Start
+
+### Local Development (Already Running)
+```bash
+# Backend API
+http://localhost:5000
+http://localhost:5000/api/incidents
+
+# Frontend UI
+http://localhost:57826
+```
+
+### Deploy to Production
+See **[COMPLETE-DEPLOYMENT-GUIDE.md](COMPLETE-DEPLOYMENT-GUIDE.md)** for live deployment in 5 minutes
+
+### Key Deployment Command
+```powershell
+# Push to GitHub & deploy to Render.com
+git push -u origin main
+# Then follow 3-step Render deployment (see guide)
+```
+
+---
+
+## ✨ Features
 
 ✅ **Create Incidents** - Report new incidents with title, description, and severity levels  
 ✅ **View All Incidents** - Display all incidents sorted by most recent  
