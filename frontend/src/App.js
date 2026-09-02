@@ -13,7 +13,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const API_BASE = 'http://localhost:5000/api/incidents';
+  const API_BASE = `${process.env.REACT_APP_API_BASE_URL || ''}/api/incidents`;
 
   // Fetch all incidents
   useEffect(() => {
