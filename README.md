@@ -33,14 +33,30 @@ Users can create incidents with a title, description, and severity, then monitor
 ## Architecture
 
 ```mermaid
-flowchart LR
-    User[User in Browser] --> UI[React Frontend]
-    UI -->|HTTP JSON| API[Express REST API]
-    API --> Routes[Incident Routes]
-    Routes --> Model[Mongoose Incident Model]
-    Model --> DB[(MongoDB Atlas)]
-    Render[Render Web Service] --> API
-    Render --> UI
+flowchart TD
+    ROOT[CortexOps Incident Management System]
+
+    ROOT --> CLIENT[Client Layer]
+    CLIENT --> BROWSER[User Browser]
+    BROWSER --> REACT[React Dashboard]
+    REACT --> UI[Forms, Filters, Metrics]
+
+    ROOT --> SERVER[Application Layer]
+    SERVER --> EXPRESS[Node.js + Express API]
+    EXPRESS --> ROUTES[Incident CRUD Routes]
+    ROUTES --> VALIDATION[Mongoose Validation]
+
+    ROOT --> DATA[Data Layer]
+    DATA --> MONGOOSE[Mongoose ODM]
+    MONGOOSE --> MONGO[(MongoDB Atlas)]
+
+    ROOT --> OPS[Operations Layer]
+    OPS --> RENDER[Render Web Service]
+    OPS --> DOCKER[Docker Configuration]
+    OPS --> HEALTH[Health Check: /api/health]
+
+    REACT -. HTTP JSON .-> EXPRESS
+    VALIDATION --> MONGOOSE
 ```
 
 The production process runs `backend/server-prod.js`. It mounts the incident API under `/api/incidents`, serves the compiled files from `frontend/build`, and sends browser routes to the React entry page.
@@ -48,21 +64,19 @@ The production process runs `backend/server-prod.js`. It mounts the incident API
 ## Request Flow
 
 ```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant R as React App
-    participant E as Express API
-    participant M as Mongoose
-    participant D as MongoDB
-
-    B->>R: Submit incident form
-    R->>E: POST /api/incidents
-    E->>M: Create Incident document
-    M->>D: Insert validated document
-    D-->>M: Saved document
-    M-->>E: Incident result
-    E-->>R: 201 JSON response
-    R-->>B: Add incident to dashboard
+flowchart TD
+    START[User submits incident form]
+    START --> STATE[React reads form state]
+    STATE --> REQUEST[POST /api/incidents]
+    REQUEST --> API[Express receives JSON request]
+    API --> ROUTE[Incident route handles request]
+    ROUTE --> MODEL[Mongoose creates document]
+    MODEL --> CHECK{Schema valid?}
+    CHECK -->|No| ERROR[Return 500 validation error]
+    CHECK -->|Yes| SAVE[(Save to MongoDB Atlas)]
+    SAVE --> RESPONSE[Return 201 incident JSON]
+    RESPONSE --> UPDATE[React updates dashboard]
+    UPDATE --> END[New incident visible to user]
 ```
 
 ## Data Model
@@ -203,13 +217,16 @@ https://cortexops-1.onrender.com
 
 ```mermaid
 flowchart TD
-    Commit[Push commit to GitHub] --> Render[Render detects main branch]
-    Render --> Install[Install backend and frontend dependencies]
-    Install --> Build[Build React production bundle]
-    Build --> Start[Start server-prod.js]
-    Start --> Health{GET /api/health}
-    Health -->|200 OK| Live[Service marked live]
-    Health -->|Failure| Logs[Inspect Render deploy logs]
+    REPO[GitHub: main branch]
+    REPO --> BUILD[Render starts build]
+    BUILD --> DEPS[Install backend dependencies]
+    DEPS --> FRONTEND[Install frontend dependencies]
+    FRONTEND --> BUNDLE[Create React production bundle]
+    BUNDLE --> SERVER[Start backend/server-prod.js]
+    SERVER --> DB[Connect to MongoDB Atlas]
+    DB --> HEALTH{Health check: /api/health}
+    HEALTH -->|200 OK| LIVE[Service is live]
+    HEALTH -->|Failure| LOGS[Review Render logs]
 ```
 
 ## Environment Variables
