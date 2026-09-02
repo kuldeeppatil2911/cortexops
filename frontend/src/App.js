@@ -1,481 +1,115 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import './App.css';
 
+const API_BASE = `${process.env.REACT_APP_API_BASE_URL || ''}/api/incidents`;
+const SOCKET_URL = process.env.REACT_APP_WS_URL || window.location.origin;
+const STATUS_OPTIONS = ['Open', 'In Progress', 'Resolved'];
+
+function formatDate(value) {
+  return value ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Not available';
+}
+
+function formatTime(value) {
+  return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+}
+
+function Metric({ label, value, detail, tone }) {
+  return <div className={`metric metric-${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
+}
+
+function StatusBadge({ status }) {
+  return <span className={`status-badge status-${status.toLowerCase().replace(' ', '-')}`}><i />{status}</span>;
+}
+
+function IncidentCard({ incident, onSelect, onStartAgent }) {
+  return <button className="incident-card" onClick={() => onSelect(incident)}>
+    <div className="card-topline"><span className={`severity severity-${incident.severity.toLowerCase()}`}>{incident.severity}</span><span className="incident-id">#{incident._id.slice(-6).toUpperCase()}</span></div>
+    <h3>{incident.title}</h3>
+    <p>{incident.description || 'No description provided.'}</p>
+    <div className="card-meta"><StatusBadge status={incident.status} /><span>{incident.raisedBy || 'Legacy record'}</span><time>{formatDate(incident.createdAt)}</time></div>
+    {incident.agentState === 'analyzing' && <div className="agent-running"><i /> Agent is working live</div>}
+    {incident.agentState !== 'analyzing' && incident.status !== 'Resolved' && <span className="card-agent-action" onClick={(event) => { event.stopPropagation(); onStartAgent(incident._id); }}>Run agent <b>→</b></span>}
+  </button>;
+}
+
+function Timeline({ incident }) {
+  const timeline = incident.timeline || [];
+  return <div className="timeline">{timeline.length === 0 ? <EmptyState title="Timeline will appear here" detail="Events are recorded as the incident moves through its lifecycle." /> : timeline.map((entry, index) => <div className="timeline-item" key={`${entry.event}-${index}`}><span className="timeline-dot" /><div><time>{formatTime(entry.createdAt)}</time><strong>{entry.event}</strong><p>{entry.detail}</p><small>{entry.actor || 'system'}</small></div></div>)}</div>;
+}
+
+function AgentPanel({ incident, onStartAgent, agentQuestion, setAgentQuestion, agentAnswer, askAgent }) {
+  if (!incident) return <div className="agent-panel empty-agent"><span className="agent-glyph">AI</span><p className="kicker">CORTEX AGENT</p><h2>Ready to investigate</h2><p>Select an active incident to focus the agent context.</p></div>;
+  const steps = incident.agentActivity || [];
+  return <div className="agent-panel"><div className="agent-heading"><span className="agent-glyph">AI</span><div><p className="kicker">CORTEX AGENT</p><h2>{incident.agentState === 'analyzing' ? 'Working on incident' : 'Investigation ready'}</h2></div><span className={`agent-state ${incident.agentState}`}>{incident.agentState === 'analyzing' ? '● LIVE' : 'IDLE'}</span></div><div className="agent-context"><span>Current context</span><strong>{incident.title}</strong><small>{incident.severity} severity · {incident.status}</small></div><div className="agent-progress"><p className="kicker">INVESTIGATION PROGRESS</p>{steps.length === 0 ? <div className="agent-next">No run started yet.<br /><span>Agent will use incident context and its knowledge-base note.</span></div> : steps.map((step) => <div className="agent-step" key={step.step}><b>✓</b><span>{step.step}</span><time>{formatTime(step.createdAt)}</time></div>)}{incident.agentState === 'analyzing' && <div className="agent-step is-running"><b>→</b><span>Working on next signal</span><time>now</time></div>}</div>{incident.rootCause && <div className="agent-insight"><span>ANALYZED</span><p>{incident.rootCause}</p></div>}{incident.resolution && <div className="agent-insight recommendation"><span>RECOMMENDED</span><p>{incident.resolution}</p></div>}<form className="agent-question" onSubmit={askAgent}><input aria-label="Ask about this incident" value={agentQuestion} onChange={(event) => setAgentQuestion(event.target.value)} placeholder="Ask about this incident..." /><button type="submit">Ask</button></form><button className="agent-button" onClick={() => onStartAgent(incident._id)} disabled={incident.agentState === 'analyzing'}>{incident.agentState === 'analyzing' ? 'Agent is working...' : 'Start investigation'} <b>→</b></button>{agentAnswer && <p className="agent-answer">{agentAnswer}</p>}</div>;
+}
+
+function KnowledgePanel({ incidents, selected }) {
+  const notes = incidents.filter((incident) => incident.knowledgeBase);
+  if (selected) return <div className="knowledge-detail"><p className="kicker">RELATED KNOWLEDGE</p><h3>{selected.knowledgeBase ? 'Incident knowledge note' : 'No incident-specific note yet'}</h3><p>{selected.knowledgeBase || 'Add a runbook, verified fix, or prevention note while editing this incident.'}</p><div className="knowledge-tags"><span>{selected.knowledgeBase ? 'Relevant' : 'Needs documentation'}</span><span>{selected.severity} context</span></div></div>;
+  return <div className="knowledge-list">{notes.length === 0 ? <EmptyState title="Knowledge base is empty" detail="Add incident-specific notes to make the agent more useful." /> : notes.map((incident) => <button className="knowledge-row" key={incident._id}><span className="knowledge-icon">KB</span><span><strong>{incident.title}</strong><small>{incident.knowledgeBase}</small></span><b>→</b></button>)}</div>;
+}
+
+function EmptyState({ title, detail }) { return <div className="empty-state"><span className="empty-mark">✓</span><strong>{title}</strong><p>{detail}</p></div>; }
+
 function App() {
   const [incidents, setIncidents] = useState([]);
-  const [formData, setFormData] = useState({
-    title: '',
-    raisedBy: '',
-    description: '',
-    severity: 'Low',
-    knowledgeBase: ''
-  });
-  const [editingId, setEditingId] = useState(null);
-  const [editingData, setEditingData] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [view, setView] = useState('overview');
+  const [selectedId, setSelectedId] = useState(null);
+  const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [error, setError] = useState('');
   const [agentQuestion, setAgentQuestion] = useState('');
-  const [agentAnswer, setAgentAnswer] = useState('Ask about triage, status, or an incident.');
-  const [selectedIncidentId, setSelectedIncidentId] = useState(null);
+  const [agentAnswer, setAgentAnswer] = useState('Ask about the selected incident.');
+  const [formData, setFormData] = useState({ title: '', raisedBy: '', description: '', severity: 'Low', knowledgeBase: '' });
 
-  const API_BASE = `${process.env.REACT_APP_API_BASE_URL || ''}/api/incidents`;
-  const SOCKET_URL = process.env.REACT_APP_WS_URL || window.location.origin;
+  const loadIncidents = async () => {
+    try { setLoading(true); const response = await fetch(API_BASE); if (!response.ok) throw new Error('Unable to load incidents'); setIncidents(await response.json()); setError(''); } catch (err) { setError('Unable to load incidents. Check the API connection and retry.'); } finally { setLoading(false); }
+  };
 
-  // Fetch all incidents
-  useEffect(() => {
-    const loadIncidents = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch(API_BASE);
-        const data = await response.json();
-        setIncidents(data);
-        setError('');
-      } catch (err) {
-        setError('Failed to fetch incidents');
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadIncidents();
-  }, [API_BASE]);
-
+  useEffect(() => { loadIncidents(); }, []);
   useEffect(() => {
     const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
-    socket.on('connect', () => setRealtimeConnected(true));
-    socket.on('disconnect', () => setRealtimeConnected(false));
-    socket.on('incident:created', (incident) => {
-      setIncidents((current) => [incident, ...current.filter((item) => item._id !== incident._id)]);
-    });
-    socket.on('incident:updated', (incident) => {
-      setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item));
-    });
-    socket.on('agent:progress', (incident) => {
-      setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item));
-    });
-    socket.on('incident:deleted', ({ id }) => {
-      setIncidents((current) => current.filter((item) => item._id !== id));
-    });
-
+    socket.on('connect', () => setRealtimeConnected(true)); socket.on('disconnect', () => setRealtimeConnected(false));
+    socket.on('incident:created', (incident) => setIncidents((current) => [incident, ...current.filter((item) => item._id !== incident._id)]));
+    socket.on('incident:updated', (incident) => setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item)));
+    socket.on('agent:started', (incident) => setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item)));
+    socket.on('agent:progress', (incident) => setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item)));
+    socket.on('incident:deleted', ({ id }) => setIncidents((current) => current.filter((item) => item._id !== id)));
     return () => socket.disconnect();
-  }, [SOCKET_URL]);
+  }, []);
 
-  // Handle form input change
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
+  const selectedIncident = incidents.find((incident) => incident._id === selectedId) || null;
+  const activeIncidents = incidents.filter((incident) => incident.status !== 'Resolved');
+  const resolvedIncidents = incidents.filter((incident) => incident.status === 'Resolved');
+  const filtered = useMemo(() => incidents.filter((incident) => { const text = `${incident.title} ${incident.description || ''} ${incident.knowledgeBase || ''} ${incident.raisedBy || ''}`.toLowerCase(); return (statusFilter === 'All' || incident.status === statusFilter) && text.includes(query.toLowerCase()); }), [incidents, query, statusFilter]);
+  const activeFiltered = filtered.filter((incident) => incident.status !== 'Resolved');
+  const resolvedFiltered = filtered.filter((incident) => incident.status === 'Resolved');
+  const highCount = activeIncidents.filter((incident) => incident.severity === 'High').length;
+  const investigatingCount = activeIncidents.filter((incident) => incident.agentState === 'analyzing' || incident.status === 'In Progress').length;
+  const activities = incidents.flatMap((incident) => (incident.timeline || []).map((entry) => ({ ...entry, title: incident.title, id: incident._id }))).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 10);
 
-  // Handle edit input change
-  const handleEditChange = (e) => {
-    const { name, value } = e.target;
-    setEditingData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
+  const navigate = (nextView) => { setView(nextView); setSelectedId(null); setQuery(''); };
+  const updateForm = (event) => setFormData((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const createIncident = async (event) => { event.preventDefault(); if (!formData.title.trim() || !formData.raisedBy.trim()) return setError('Incident title and raised by are required.'); try { const response = await fetch(API_BASE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); if (!response.ok) throw new Error('Create failed'); setFormData({ title: '', raisedBy: '', description: '', severity: 'Low', knowledgeBase: '' }); setError(''); } catch (err) { setError('Unable to create incident. Please retry.'); } };
+  const startAgent = async (id) => { setSelectedId(id); try { const response = await fetch(`${API_BASE}/${id}/agent/start`, { method: 'POST' }); if (!response.ok) throw new Error('Agent start failed'); } catch (err) { setError('Unable to start the agent. Please retry.'); } };
+  const askAgent = (event) => { event.preventDefault(); const question = agentQuestion.toLowerCase(); const target = selectedIncident || incidents[0]; if (!target) return setAgentAnswer('Create an incident first so I have operational context.'); if (question.includes('root') || question.includes('cause')) setAgentAnswer(target.rootCause || 'No root cause has been recorded yet. Start an investigation and add evidence to the knowledge base.'); else if (question.includes('similar') || question.includes('knowledge') || question.includes('runbook')) setAgentAnswer(target.knowledgeBase || 'No incident-specific knowledge note is attached yet. Add the verified runbook or fix to this incident.'); else if (question.includes('next') || question.includes('check')) setAgentAnswer(target.agentState === 'analyzing' ? 'The agent is checking service health, incident signals, and the attached knowledge note.' : 'Start the investigation, check impact and scope, then record the next verified action.'); else setAgentAnswer(`${target.title} is ${target.status.toLowerCase()} with ${target.severity.toLowerCase()} severity. I can explain the root cause, next check, or knowledge used.`); };
 
-  // Create new incident
-  const handleCreateIncident = async (e) => {
-    e.preventDefault();
-    if (!formData.title.trim()) {
-      setError('Title is required');
-      return;
-    }
+  const renderIncidentDetail = () => <main className="content detail-page"><button className="back-button" onClick={() => navigate('active')}>← Back to incidents</button>{selectedIncident ? <><div className="detail-header"><div><p className="kicker">INCIDENT #{selectedIncident._id.slice(-6).toUpperCase()}</p><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || 'No description provided.'}</p></div><div className="detail-badges"><span className={`severity severity-${selectedIncident.severity.toLowerCase()}`}>{selectedIncident.severity}</span><StatusBadge status={selectedIncident.status} /></div></div><div className="detail-context"><span>Raised by <b>{selectedIncident.raisedBy || 'Legacy record'}</b></span><span>Created <b>{formatDate(selectedIncident.createdAt)}</b></span><span>Resolved <b>{formatDate(selectedIncident.resolvedAt)}</b></span></div><div className="detail-grid"><section className="detail-card"><div className="panel-title"><div><p className="kicker">INCIDENT TIMELINE</p><h3>Operational history</h3></div><span>{selectedIncident.timeline?.length || 0} events</span></div><Timeline incident={selectedIncident} /></section><AgentPanel incident={selectedIncident} onStartAgent={startAgent} agentQuestion={agentQuestion} setAgentQuestion={setAgentQuestion} agentAnswer={agentAnswer} askAgent={askAgent} /></div><section className="detail-card knowledge-detail-card"><div className="panel-title"><div><p className="kicker">KNOWLEDGE BASE</p><h3>Incident context</h3></div></div><KnowledgePanel selected={selectedIncident} incidents={incidents} /></section></> : <EmptyState title="Select an incident" detail="Choose an incident from the queue to open its command center." />}</main>;
 
-    try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
-      });
+  const renderMain = () => { if (view === 'detail') return renderIncidentDetail(); const title = view === 'overview' ? 'Good evening' : view === 'active' ? 'Active incidents' : view === 'resolved' ? 'Resolved incidents' : view === 'activity' ? 'Live activity' : view === 'agent' ? 'Agent workspace' : view === 'knowledge' ? 'Knowledge base' : 'System settings'; const subtitle = view === 'overview' ? 'Infrastructure overview and incident status.' : view === 'active' ? `${activeIncidents.length} incidents currently need attention.` : view === 'resolved' ? `${resolvedIncidents.length} incidents in historical archive.` : 'Follow the operational record from detection to resolution.'; return <main className="content"><div className="page-heading"><div><p className="kicker">{realtimeConnected ? '● LIVE SYSTEM' : '○ CONNECTING'}</p><h2>{title}</h2><p>{subtitle}</p></div>{view !== 'settings' && <button className="primary-button" onClick={() => document.querySelector('.create-panel')?.scrollIntoView({ behavior: 'smooth' })}>+ Report incident</button>}</div>{error && <div className="error-banner"><strong>Unable to complete action</strong><span>{error}</span><button onClick={() => { setError(''); loadIncidents(); }}>Retry</button></div>}{loading && view === 'overview' ? <div className="loading-state">Loading current operational data...</div> : view === 'overview' && <><Overview incidents={incidents} active={activeIncidents} highCount={highCount} investigatingCount={investigatingCount} activities={activities} onSelect={(incident) => { setSelectedId(incident._id); setView('detail'); }} onStartAgent={startAgent} /><CreatePanel formData={formData} updateForm={updateForm} createIncident={createIncident} /></>}{view === 'active' && <IncidentList title="Active incidents" incidents={activeFiltered} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onSelect={(incident) => { setSelectedId(incident._id); setView('detail'); }} onStartAgent={startAgent} emptyTitle="No active incidents" emptyDetail="All monitored incidents are currently resolved." />}{view === 'resolved' && <IncidentList title="Resolved incidents" incidents={resolvedFiltered} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onSelect={(incident) => { setSelectedId(incident._id); setView('detail'); }} onStartAgent={startAgent} emptyTitle="No resolved incidents" emptyDetail="Resolved incidents will remain available here with their complete history." />}{view === 'activity' && <Activity activities={activities} />}{view === 'agent' && <div className="agent-workspace"><AgentPanel incident={selectedIncident || activeIncidents[0]} onStartAgent={startAgent} agentQuestion={agentQuestion} setAgentQuestion={setAgentQuestion} agentAnswer={agentAnswer} askAgent={askAgent} /><div className="activity-card"><div className="panel-title"><div><p className="kicker">ACTIVITY STREAM</p><h3>Agent events</h3></div></div><Activity activities={activities.filter((activity) => activity.event.includes('Agent') || activity.event.includes('Searching') || activity.event.includes('Checking'))} /></div></div>}{view === 'knowledge' && <><div className="search-bar"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search incident knowledge..." /></div><KnowledgePanel incidents={filtered} /></>}{view === 'settings' && <Settings realtimeConnected={realtimeConnected} />}</main>; };
 
-      if (!response.ok) throw new Error('Failed to create incident');
-
-      const newIncident = await response.json();
-      setIncidents([newIncident, ...incidents]);
-      setFormData({ title: '', raisedBy: '', description: '', severity: 'Low', knowledgeBase: '' });
-      setError('');
-    } catch (err) {
-      setError('Error creating incident: ' + err.message);
-    }
-  };
-
-  // Start editing
-  const handleStartEdit = (incident) => {
-    setEditingId(incident._id);
-    setEditingData({ ...incident });
-  };
-
-  // Cancel editing
-  const handleCancelEdit = () => {
-    setEditingId(null);
-    setEditingData({});
-  };
-
-  // Update incident
-  const handleUpdateIncident = async (id) => {
-    try {
-      const response = await fetch(`${API_BASE}/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingData)
-      });
-
-      if (!response.ok) throw new Error('Failed to update incident');
-
-      const updatedIncident = await response.json();
-      setIncidents(incidents.map(inc => inc._id === id ? updatedIncident : inc));
-      setEditingId(null);
-      setEditingData({});
-      setError('');
-    } catch (err) {
-      setError('Error updating incident: ' + err.message);
-    }
-  };
-
-  // Delete incident
-  const handleDeleteIncident = async (id) => {
-    if (window.confirm('Are you sure you want to delete this incident?')) {
-      try {
-        const response = await fetch(`${API_BASE}/${id}`, {
-          method: 'DELETE'
-        });
-
-        if (!response.ok) throw new Error('Failed to delete incident');
-
-        setIncidents(incidents.filter(inc => inc._id !== id));
-        setError('');
-      } catch (err) {
-        setError('Error deleting incident: ' + err.message);
-      }
-    }
-  };
-
-  const startAgent = async (incidentId) => {
-    try {
-      setSelectedIncidentId(incidentId);
-      const response = await fetch(`${API_BASE}/${incidentId}/agent/start`, { method: 'POST' });
-      if (!response.ok) throw new Error((await response.json()).error || 'Agent could not start');
-    } catch (err) {
-      setError(`Agent error: ${err.message}`);
-    }
-  };
-
-  const getSeverityColor = (severity) => {
-    switch (severity) {
-      case 'High': return '#d32f2f';
-      case 'Medium': return '#f57c00';
-      case 'Low': return '#388e3c';
-      default: return '#666';
-    }
-  };
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'Open': return '#d32f2f';
-      case 'In Progress': return '#f57c00';
-      case 'Resolved': return '#388e3c';
-      default: return '#666';
-    }
-  };
-
-  const visibleIncidents = incidents.filter((incident) => {
-    const matchesStatus = statusFilter === 'All' || incident.status === statusFilter;
-    const searchableText = `${incident.title} ${incident.description || ''}`.toLowerCase();
-    return matchesStatus && searchableText.includes(searchTerm.toLowerCase());
-  });
-
-  const openCount = incidents.filter((incident) => incident.status === 'Open').length;
-  const inProgressCount = incidents.filter((incident) => incident.status === 'In Progress').length;
-  const resolvedCount = incidents.filter((incident) => incident.status === 'Resolved').length;
-  const matchesIncident = (incident) => {
-    const matchesStatus = statusFilter === 'All' || incident.status === statusFilter;
-    const searchableText = `${incident.title} ${incident.description || ''} ${incident.knowledgeBase || ''}`.toLowerCase();
-    return matchesStatus && searchableText.includes(searchTerm.toLowerCase());
-  };
-  const activeIncidents = incidents.filter((incident) => incident.status !== 'Resolved' && matchesIncident(incident));
-  const resolvedIncidents = incidents.filter((incident) => incident.status === 'Resolved' && matchesIncident(incident));
-  const incidentGroups = [
-    { title: 'Active queue', count: activeIncidents.length, items: activeIncidents },
-    { title: 'Resolved archive', count: resolvedIncidents.length, items: resolvedIncidents }
-  ];
-
-  const getAgentGuidance = () => {
-    if (statusFilter === 'Resolved') return { title: 'Closeout checklist', body: 'Capture the fix, confirm monitoring is green, and link the knowledge-base note before closing the record.' };
-    if (statusFilter === 'In Progress') return { title: 'Investigation mode', body: 'Record the current hypothesis, add evidence to the knowledge base, and update the status when the next action is clear.' };
-    return { title: 'Triage assistant', body: 'Start with impact, scope, and the next safe action. High-severity incidents should be acknowledged quickly and documented as you investigate.' };
-  };
-  const agentGuidance = getAgentGuidance();
-  const selectedIncident = incidents.find((incident) => incident._id === selectedIncidentId);
-  const answerAgent = (question) => {
-    const normalizedQuestion = question.toLowerCase();
-    const highPriorityCount = incidents.filter((incident) => incident.severity === 'High' && incident.status !== 'Resolved').length;
-    if (normalizedQuestion.includes('high') || normalizedQuestion.includes('urgent')) {
-      return `${highPriorityCount} high-severity incident${highPriorityCount === 1 ? '' : 's'} need attention. Acknowledge impact, assign an owner, and record the first mitigation step in the knowledge base.`;
-    }
-    if (normalizedQuestion.includes('resolve') || normalizedQuestion.includes('close')) {
-      return `To resolve an incident, choose Resolved, enter your name, add the reason for the status change, and confirm the recovery evidence in its knowledge-base note.`;
-    }
-    if (normalizedQuestion.includes('status') || normalizedQuestion.includes('progress')) {
-      return `${openCount} open and ${inProgressCount} in progress. Move an incident to In Progress only after recording who is taking ownership and why.`;
-    }
-    if (normalizedQuestion.includes('knowledge') || normalizedQuestion.includes('runbook') || normalizedQuestion.includes('fix')) {
-      return 'Use the knowledge-base note for the verified fix, useful commands, evidence, and prevention steps. Keep it short enough for the next responder to act on.';
-    }
-    return `There are ${incidents.length} incidents in the queue. Start with impact and scope, then document the next action. You can ask me about high priority, status, resolution, or the knowledge base.`;
-  };
-  const handleAgentQuestion = (event) => {
-    event.preventDefault();
-    setAgentAnswer(answerAgent(agentQuestion));
-  };
-  const handleAgentInput = (event) => {
-    const question = event.target.value;
-    setAgentQuestion(question);
-    if (question.trim()) setAgentAnswer(answerAgent(question));
-  };
-
-  return (
-    <div className="App">
-      <header className="App-header">
-        <div className="brand-mark">CO</div>
-        <div>
-          <p className="eyebrow">OPERATIONS CONTROL CENTER</p>
-          <h1>CortexOps <span>Incident Management</span></h1>
-        </div>
-        <div className={`header-status ${realtimeConnected ? 'is-live' : ''}`}><span /> {realtimeConnected ? 'Live updates on' : 'Connecting live feed'}</div>
-      </header>
-
-      <div className="container">
-        <section className="hero-row">
-          <div>
-            <p className="eyebrow accent">LIVE OVERVIEW / {new Date().toLocaleDateString()}</p>
-            <h2>Keep every incident moving.</h2>
-            <p className="hero-copy">A focused command center for your team to report, triage, and close operational risk.</p>
-          </div>
-          <div className="hero-note"><strong>24/7</strong><span>Operational visibility</span></div>
-        </section>
-
-        {error && <div className="error-message"><strong>Action needed</strong>{error}</div>}
-
-        <section className="stats-grid" aria-label="Incident summary">
-          <div className="stat-card stat-total"><span>Total incidents</span><strong>{incidents.length}</strong><small>All reported events</small></div>
-          <div className="stat-card stat-open"><span>Open</span><strong>{openCount}</strong><small>Needs attention</small></div>
-          <div className="stat-card stat-progress"><span>In progress</span><strong>{inProgressCount}</strong><small>Being investigated</small></div>
-          <div className="stat-card stat-resolved"><span>Resolved</span><strong>{resolvedCount}</strong><small>Closed successfully</small></div>
-        </section>
-
-        <section className="workspace-grid">
-        <div className="form-section">
-          <div className="section-heading"><div><p className="eyebrow accent">NEW EVENT</p><h2>Report incident</h2></div><span className="step-count">01</span></div>
-          <form onSubmit={handleCreateIncident}>
-            <label><span>Incident title <b className="required-mark">*</b></span><input
-              type="text"
-              name="title"
-              placeholder="Incident Title"
-              value={formData.title}
-              onChange={handleInputChange}
-              required
-            /></label>
-            <label><span>Raised by <b className="required-mark">*</b></span><input
-              type="text"
-              name="raisedBy"
-              placeholder="Your name"
-              value={formData.raisedBy}
-              onChange={handleInputChange}
-              required
-            /></label>
-            <label>What happened?<textarea
-              name="description"
-              placeholder="Description (optional)"
-              value={formData.description}
-              onChange={handleInputChange}
-              rows="3"
-            /></label>
-            <label>Knowledge base note<textarea
-              name="knowledgeBase"
-              placeholder="Runbook, fix, or prevention note"
-              value={formData.knowledgeBase}
-              onChange={handleInputChange}
-              rows="3"
-            /></label>
-            <label><span>Severity <b className="required-mark">*</b></span><select
-              name="severity"
-              value={formData.severity}
-              onChange={handleInputChange}
-            >
-              <option value="Low">Low</option>
-              <option value="Medium">Medium</option>
-              <option value="High">High</option>
-            </select></label>
-            <button type="submit" className="btn-primary"><span>+</span> Create incident</button>
-          </form>
-        </div>
-
-        <aside className="agent-panel">
-          <div className="agent-avatar">AI</div>
-          <p className="eyebrow accent">OPS GUIDE</p>
-          <h2>{selectedIncident ? `Agent: ${selectedIncident.title}` : agentGuidance.title}</h2>
-          <p>{agentGuidance.body}</p>
-          {selectedIncident && <div className="agent-context"><span>{selectedIncident.severity} / {selectedIncident.status}</span><strong>Raised by {selectedIncident.raisedBy || 'Legacy record'}</strong></div>}
-          {selectedIncident && <div className="agent-activity"><span className="eyebrow">LIVE WORK</span>{(selectedIncident.agentActivity || []).map((activity) => <div key={activity.step} className="activity-row"><b>✓</b><span>{activity.step}</span></div>)}{selectedIncident.agentState === 'analyzing' && <div className="activity-row running"><b>→</b><span>Agent is working...</span></div>}</div>}
-          {selectedIncident && <div className="agent-detail"><span>INCIDENT TIMELINE</span>{(selectedIncident.timeline || []).slice(-4).map((entry, index) => <div key={`${entry.event}-${index}`}><b>{new Date(entry.createdAt).toLocaleTimeString()}</b><p>{entry.event}</p></div>)}{selectedIncident.rootCause && <p><strong>Possible cause:</strong> {selectedIncident.rootCause}</p>}{selectedIncident.resolution && <p><strong>Recommendation:</strong> {selectedIncident.resolution}</p>}</div>}
-          <div className="agent-answer"><span>LIVE ANSWER</span><p>{agentAnswer}</p></div>
-          <form className="agent-form" onSubmit={handleAgentQuestion}><input aria-label="Ask operations assistant" value={agentQuestion} onChange={handleAgentInput} placeholder="Ask the ops agent..." /><button type="submit" title="Ask operations agent">Ask</button></form>
-          <div className="agent-steps"><span>01</span><span>Assess impact</span><span>02</span><span>Document evidence</span><span>03</span><span>Confirm recovery</span></div>
-        </aside>
-
-        <div className="incidents-section">
-          <div className="section-heading list-heading"><div><p className="eyebrow accent">INCIDENT QUEUE</p><h2>Recent activity <span>{visibleIncidents.length}</span></h2></div><button className="refresh-button" onClick={() => window.location.reload()} title="Refresh incidents">↻ <span>Refresh</span></button></div>
-          <div className="filters">
-            <div className="search-wrap"><span>⌕</span><input aria-label="Search incidents" placeholder="Search incidents..." value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} /></div>
-            <select aria-label="Filter by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All</option><option>Open</option><option>In Progress</option><option>Resolved</option></select>
-          </div>
-          {loading ? (
-            <div className="empty-state"><span className="loading-dot" /> Loading incident queue...</div>
-          ) : visibleIncidents.length === 0 ? (
-            <div className="empty-state"><strong>{incidents.length ? 'No matching incidents' : 'No incidents reported yet'}</strong><span>Try another filter or create a new event.</span></div>
-          ) : (
-            <div className="queue-groups">
-              {incidentGroups.map((group) => group.items.length > 0 && <section className="queue-group" key={group.title}>
-                <div className="queue-group-heading"><h3>{group.title}</h3><span>{group.count}</span></div>
-                <div className="incidents-grid">
-              {group.items.map(incident => (
-                <div key={incident._id} className="incident-card">
-                  {editingId === incident._id ? (
-                    // Edit Mode
-                    <div className="edit-form">
-                      <input
-                        type="text"
-                        name="title"
-                        value={editingData.title}
-                        onChange={handleEditChange}
-                      />
-                      <textarea
-                        name="description"
-                        value={editingData.description}
-                        onChange={handleEditChange}
-                        rows="2"
-                      />
-                      <textarea
-                        name="knowledgeBase"
-                        placeholder="Knowledge base note"
-                        value={editingData.knowledgeBase || ''}
-                        onChange={handleEditChange}
-                        rows="2"
-                      />
-                      <select
-                        name="severity"
-                        value={editingData.severity}
-                        onChange={handleEditChange}
-                      >
-                        <option value="Low">Low</option>
-                        <option value="Medium">Medium</option>
-                        <option value="High">High</option>
-                      </select>
-                      <select
-                        name="status"
-                        value={editingData.status}
-                        onChange={handleEditChange}
-                      >
-                        <option value="Open">Open</option>
-                        <option value="In Progress">In Progress</option>
-                        <option value="Resolved">Resolved</option>
-                      </select>
-                      {editingData.status !== incident.status && <>
-                        <label><span>Status changed by <b className="required-mark">*</b></span><input
-                          type="text"
-                          name="statusChangedBy"
-                          placeholder="Name of person changing status"
-                          value={editingData.statusChangedBy || ''}
-                          onChange={handleEditChange}
-                          required
-                        /></label>
-                        <label><span>Why change status? <b className="required-mark">*</b></span><textarea
-                          name="statusChangeReason"
-                          placeholder="Why is the status changing?"
-                          value={editingData.statusChangeReason || ''}
-                          onChange={handleEditChange}
-                          rows="2"
-                          required
-                        /></label>
-                      </>}
-                      <div className="button-group">
-                        <button
-                          className="btn-success"
-                          onClick={() => handleUpdateIncident(incident._id)}
-                        >
-                          Save
-                        </button>
-                        <button
-                          className="btn-cancel"
-                          onClick={handleCancelEdit}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    // View Mode
-                    <>
-                      <h3>{incident.title}</h3>
-                      <p>{incident.description || 'No description'}</p>
-                      <div className="incident-owner"><span>Raised by</span><strong>{incident.raisedBy || 'Legacy record'}</strong></div>
-                      {incident.knowledgeBase && <div className="knowledge-base"><span>KB</span><p>{incident.knowledgeBase}</p></div>}
-                      <div className="incident-meta">
-                        <span
-                          className="badge severity"
-                          style={{ backgroundColor: getSeverityColor(incident.severity) }}
-                        >
-                          {incident.severity} Severity
-                        </span>
-                        <span
-                          className="badge status"
-                          style={{ backgroundColor: getStatusColor(incident.status) }}
-                        >
-                          {incident.status}
-                        </span>
-                      </div>
-                      <p className="date">
-                        {new Date(incident.createdAt).toLocaleString()}
-                      </p>
-                      {incident.statusChangedBy && <p className="status-audit">Status changed by <strong>{incident.statusChangedBy}</strong>: {incident.statusChangeReason}</p>}
-                      <div className="button-group">
-                        <button className="btn-agent" onClick={() => startAgent(incident._id)}>{incident.agentState === 'analyzing' ? 'Agent working' : 'Run agent'}</button>
-                        <button
-                          className="btn-edit"
-                          onClick={() => handleStartEdit(incident)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn-delete"
-                          onClick={() => handleDeleteIncident(incident._id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-                </div>
-              </section>)}
-            </div>
-          )}
-        </div>
-        </section>
-      </div>
-    </div>
-  );
+  return <div className="app-shell"><aside className={`sidebar ${sidebarOpen ? '' : 'collapsed'}`}><div className="side-brand"><span>CO</span>{sidebarOpen && <strong>CORTEX<span>OPS</span></strong>}</div><nav><NavGroup label="Workspace" items={[['overview', 'Overview', '⌂'], ['active', 'Active incidents', '◉', activeIncidents.length], ['resolved', 'Resolved archive', '✓', resolvedIncidents.length]]} view={view} navigate={navigate} expanded={sidebarOpen} /><NavGroup label="Intelligence" items={[['agent', 'Agent workspace', '✦'], ['knowledge', 'Knowledge base', '▤']]} view={view} navigate={navigate} expanded={sidebarOpen} /><NavGroup label="System" items={[['activity', 'Activity', '≡'], ['settings', 'Settings', '⚙']]} view={view} navigate={navigate} expanded={sidebarOpen} /></nav><div className="side-footer">{sidebarOpen && <><span className="avatar">KP</span><div><strong>Operator</strong><small>Production workspace</small></div></>}</div></aside><div className="app-main"><header className="topbar"><button className="menu-button" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button><div className="global-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search incidents, knowledge, activity..." /><kbd>⌘ K</kbd></div><div className="top-actions"><span className={`connection ${realtimeConnected ? 'connected' : ''}`}><i />{realtimeConnected ? 'Live' : 'Connecting'}</span><button className="icon-button" title="Notifications">♢<b>{highCount || ''}</b></button><span className="top-avatar">KP</span></div></header>{selectedId && view !== 'detail' ? renderIncidentDetail() : renderMain()}</div></div>;
 }
+
+function NavGroup({ label, items, view, navigate, expanded }) { return <div className="nav-group"><span className="nav-label">{expanded ? label : '·'}</span>{items.map(([id, name, icon, count]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => navigate(id)} title={name}><span>{icon}</span>{expanded && <>{name}{count > 0 && <b>{count}</b>}</>}</button>)}</div>; }
+function Overview({ incidents, active, highCount, investigatingCount, activities, onSelect, onStartAgent }) { return <><section className="metrics"><Metric label="Active" value={active.length} detail="Current queue" tone="orange" /><Metric label="Critical / high" value={highCount} detail="Needs attention" tone="red" /><Metric label="Investigating" value={investigatingCount} detail="Agent or operator" tone="blue" /><Metric label="Resolved" value={incidents.filter((i) => i.status === 'Resolved').length} detail="Historical archive" tone="green" /></section><div className="overview-grid"><section className="panel active-panel"><div className="panel-title"><div><p className="kicker">OPERATIONS</p><h3>Active incidents</h3></div><span>{active.length} open</span></div>{active.length ? <div className="compact-list">{active.slice(0, 5).map((incident) => <IncidentCard key={incident._id} incident={incident} onSelect={onSelect} onStartAgent={onStartAgent} />)}</div> : <EmptyState title="No active incidents" detail="All monitored systems are currently operating normally." />}</section><section className="panel health-panel"><div className="panel-title"><div><p className="kicker">SIGNALS</p><h3>Service health</h3></div><span className="healthy-label"><i /> Connected</span></div><div className="health-row"><span className="health-icon">API</span><div><strong>Incident API</strong><small>MongoDB-backed service</small></div><b>Healthy</b></div><div className="health-row"><span className="health-icon">RT</span><div><strong>Realtime channel</strong><small>Socket.IO event stream</small></div><b>Healthy</b></div><div className="health-row"><span className="health-icon">AG</span><div><strong>Agent workflow</strong><small>Contextual investigation engine</small></div><b>{investigatingCount ? 'Working' : 'Ready'}</b></div></section></div><section className="panel activity-panel"><div className="panel-title"><div><p className="kicker">EVENT STREAM</p><h3>Live activity</h3></div><span>Last 10 events</span></div><Activity activities={activities.slice(0, 5)} /></section></>; }
+function IncidentList({ title, incidents, query, setQuery, statusFilter, setStatusFilter, onSelect, onStartAgent, emptyTitle, emptyDetail }) { return <section className="list-page"><div className="list-toolbar"><div className="search-bar"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${title.toLowerCase()}...`} /></div><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All</option>{STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}</select></div>{incidents.length ? <div className="incident-list">{incidents.map((incident) => <IncidentCard key={incident._id} incident={incident} onSelect={onSelect} onStartAgent={onStartAgent} />)}</div> : <EmptyState title={emptyTitle} detail={emptyDetail} />}</section>; }
+function Activity({ activities }) { return <div className="activity-feed">{activities.length ? activities.map((activity, index) => <div className="activity-item" key={`${activity.id}-${activity.event}-${index}`}><span className="activity-dot" /><div><strong>{activity.event}</strong><p>{activity.title}</p><small>{activity.detail || 'System event'} · {formatTime(activity.createdAt)}</small></div></div>) : <EmptyState title="No activity yet" detail="Incident and agent events will appear here in real time." />}</div>; }
+function CreatePanel({ formData, updateForm, createIncident }) { return <section className="create-panel panel"><div className="panel-title"><div><p className="kicker">NEW EVENT</p><h3>Report an incident</h3></div><span>All fields marked <b className="required-mark">*</b> are required</span></div><form className="create-form" onSubmit={createIncident}><label>Incident title <b className="required-mark">*</b><input name="title" value={formData.title} onChange={updateForm} placeholder="What is happening?" required /></label><label>Raised by <b className="required-mark">*</b><input name="raisedBy" value={formData.raisedBy} onChange={updateForm} placeholder="Operator name" required /></label><label>Description<textarea name="description" value={formData.description} onChange={updateForm} placeholder="Impact, scope, and current symptoms" /></label><label>Knowledge-base note<textarea name="knowledgeBase" value={formData.knowledgeBase} onChange={updateForm} placeholder="Relevant runbook, fix, or prevention note" /></label><label>Severity <b className="required-mark">*</b><select name="severity" value={formData.severity} onChange={updateForm}><option>Low</option><option>Medium</option><option>High</option></select></label><button className="primary-button" type="submit">Create incident <b>→</b></button></form></section>; }
+function Settings({ realtimeConnected }) { return <section className="settings-panel panel"><p className="kicker">SYSTEM</p><h3>Workspace settings</h3><div className="setting-row"><span>Realtime connection</span><strong>{realtimeConnected ? 'Connected' : 'Connecting'}</strong></div><div className="setting-row"><span>API origin</span><strong>Same-origin production API</strong></div><div className="setting-row"><span>Data source</span><strong>MongoDB Atlas</strong></div><p className="settings-note">This workspace uses the live API, persisted incident history, and Socket.IO events. No mock incident data is displayed.</p></section>; }
 
 export default App;
