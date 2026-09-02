@@ -34,7 +34,6 @@ function App() {
 
     loadIncidents();
   }, [API_BASE]);
-  };
 
   // Handle form input change
   const handleInputChange = (e) => {
