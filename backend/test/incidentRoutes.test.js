@@ -31,6 +31,7 @@ test.after(async () => {
 test("incident API supports the complete lifecycle", async () => {
   const createResponse = await api.post("/api/incidents").send({
     title: "Database latency",
+    raisedBy: "Aarav Sharma",
     description: "Primary database response time increased.",
     severity: "High",
     knowledgeBase: "Check database connections and move traffic to the replica.",
@@ -39,6 +40,7 @@ test("incident API supports the complete lifecycle", async () => {
   assert.equal(createResponse.status, 201);
   assert.equal(createResponse.body.title, "Database latency");
   assert.equal(createResponse.body.status, "Open");
+  assert.equal(createResponse.body.raisedBy, "Aarav Sharma");
   assert.match(createResponse.body.knowledgeBase, /replica/);
   const incidentId = createResponse.body._id;
 
@@ -55,6 +57,8 @@ test("incident API supports the complete lifecycle", async () => {
     description: "Traffic was moved to the replica.",
     severity: "Medium",
     status: "Resolved",
+    statusChangedBy: "Aarav Sharma",
+    statusChangeReason: "Recovery was verified in production monitoring.",
     knowledgeBase: "Recovery confirmed after traffic was moved to the replica.",
   });
   assert.equal(updateResponse.status, 200);
@@ -67,6 +71,20 @@ test("incident API supports the complete lifecycle", async () => {
 
   const missingResponse = await api.get(`/api/incidents/${incidentId}`);
   assert.equal(missingResponse.status, 404);
+});
+
+test("status changes require the actor name and reason", async () => {
+  const createResponse = await api.post("/api/incidents").send({
+    title: "Queue backlog",
+    raisedBy: "Neha Kapoor",
+  });
+
+  const response = await api.put(`/api/incidents/${createResponse.body._id}`).send({
+    status: "In Progress",
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /name and reason/i);
 });
 
 test("incident API rejects invalid severity values", async () => {

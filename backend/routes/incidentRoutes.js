@@ -5,10 +5,11 @@ const Incident = require("../model/Incident");
 // CREATE INCIDENT
 router.post("/", async (req, res) => {
   try {
-    const { title, description, severity, knowledgeBase } = req.body;
+    const { title, raisedBy, description, severity, knowledgeBase } = req.body;
 
     const newIncident = new Incident({
       title,
+      raisedBy,
       description,
       severity,
       knowledgeBase,
@@ -48,11 +49,20 @@ router.get("/:id", async (req, res) => {
 // UPDATE INCIDENT
 router.put("/:id", async (req, res) => {
   try {
-    const { title, description, severity, status, knowledgeBase } = req.body;
+    const { title, description, severity, status, knowledgeBase, statusChangedBy, statusChangeReason } = req.body;
+    const currentIncident = await Incident.findById(req.params.id);
+    if (!currentIncident) {
+      return res.status(404).json({ error: "Incident not found" });
+    }
+
+    if (status && status !== currentIncident.status && (!statusChangedBy || !statusChangeReason)) {
+      return res.status(400).json({ error: "Name and reason are required when changing status" });
+    }
+
     const incident = await Incident.findByIdAndUpdate(
       req.params.id,
-      { title, description, severity, status, knowledgeBase },
-      { new: true }
+      { title, description, severity, status, knowledgeBase, statusChangedBy, statusChangeReason },
+      { new: true, runValidators: true }
     );
     if (!incident) {
       return res.status(404).json({ error: "Incident not found" });

@@ -5,6 +5,7 @@ function App() {
   const [incidents, setIncidents] = useState([]);
   const [formData, setFormData] = useState({
     title: '',
+    raisedBy: '',
     description: '',
     severity: 'Low',
     knowledgeBase: ''
@@ -75,7 +76,7 @@ function App() {
 
       const newIncident = await response.json();
       setIncidents([newIncident, ...incidents]);
-      setFormData({ title: '', description: '', severity: 'Low', knowledgeBase: '' });
+      setFormData({ title: '', raisedBy: '', description: '', severity: 'Low', knowledgeBase: '' });
       setError('');
     } catch (err) {
       setError('Error creating incident: ' + err.message);
@@ -221,6 +222,14 @@ function App() {
               onChange={handleInputChange}
               required
             /></label>
+            <label>Raised by<input
+              type="text"
+              name="raisedBy"
+              placeholder="Your name"
+              value={formData.raisedBy}
+              onChange={handleInputChange}
+              required
+            /></label>
             <label>What happened?<textarea
               name="description"
               placeholder="Description (optional)"
@@ -313,6 +322,24 @@ function App() {
                         <option value="In Progress">In Progress</option>
                         <option value="Resolved">Resolved</option>
                       </select>
+                      {editingData.status !== incident.status && <>
+                        <input
+                          type="text"
+                          name="statusChangedBy"
+                          placeholder="Name of person changing status"
+                          value={editingData.statusChangedBy || ''}
+                          onChange={handleEditChange}
+                          required
+                        />
+                        <textarea
+                          name="statusChangeReason"
+                          placeholder="Why is the status changing?"
+                          value={editingData.statusChangeReason || ''}
+                          onChange={handleEditChange}
+                          rows="2"
+                          required
+                        />
+                      </>}
                       <div className="button-group">
                         <button
                           className="btn-success"
@@ -333,6 +360,7 @@ function App() {
                     <>
                       <h3>{incident.title}</h3>
                       <p>{incident.description || 'No description'}</p>
+                      <div className="incident-owner"><span>Raised by</span><strong>{incident.raisedBy || 'Legacy record'}</strong></div>
                       {incident.knowledgeBase && <div className="knowledge-base"><span>KB</span><p>{incident.knowledgeBase}</p></div>}
                       <div className="incident-meta">
                         <span
@@ -351,6 +379,7 @@ function App() {
                       <p className="date">
                         {new Date(incident.createdAt).toLocaleString()}
                       </p>
+                      {incident.statusChangedBy && <p className="status-audit">Status changed by <strong>{incident.statusChangedBy}</strong>: {incident.statusChangeReason}</p>}
                       <div className="button-group">
                         <button
                           className="btn-edit"

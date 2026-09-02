@@ -5,6 +5,11 @@ const incidentSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  raisedBy: {
+    type: String,
+    required: true,
+    trim: true,
+  },
   description: String,
   knowledgeBase: {
     type: String,
@@ -20,6 +25,16 @@ const incidentSchema = new mongoose.Schema({
     type: String,
     enum: ["Open", "In Progress", "Resolved"],
     default: "Open",
+  },
+  statusChangedBy: {
+    type: String,
+    trim: true,
+    default: "",
+  },
+  statusChangeReason: {
+    type: String,
+    trim: true,
+    default: "",
   },
   createdAt: {
     type: Date,
