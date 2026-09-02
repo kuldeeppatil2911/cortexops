@@ -1,4 +1,4 @@
-# 🚀 CortexOps - Incident Management System
+# 🚀 CortexOps Incident Management System
 
 **A complete, production-ready full-stack incident management application built with Node.js/Express + React + MongoDB**
 
