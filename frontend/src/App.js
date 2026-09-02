@@ -20,6 +20,7 @@ function App() {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [agentQuestion, setAgentQuestion] = useState('');
   const [agentAnswer, setAgentAnswer] = useState('Ask about triage, status, or an incident.');
+  const [selectedIncidentId, setSelectedIncidentId] = useState(null);
 
   const API_BASE = `${process.env.REACT_APP_API_BASE_URL || ''}/api/incidents`;
   const SOCKET_URL = process.env.REACT_APP_WS_URL || window.location.origin;
@@ -52,6 +53,9 @@ function App() {
       setIncidents((current) => [incident, ...current.filter((item) => item._id !== incident._id)]);
     });
     socket.on('incident:updated', (incident) => {
+      setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item));
+    });
+    socket.on('agent:progress', (incident) => {
       setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item));
     });
     socket.on('incident:deleted', ({ id }) => {
@@ -156,6 +160,16 @@ function App() {
     }
   };
 
+  const startAgent = async (incidentId) => {
+    try {
+      setSelectedIncidentId(incidentId);
+      const response = await fetch(`${API_BASE}/${incidentId}/agent/start`, { method: 'POST' });
+      if (!response.ok) throw new Error((await response.json()).error || 'Agent could not start');
+    } catch (err) {
+      setError(`Agent error: ${err.message}`);
+    }
+  };
+
   const getSeverityColor = (severity) => {
     switch (severity) {
       case 'High': return '#d32f2f';
@@ -201,6 +215,7 @@ function App() {
     return { title: 'Triage assistant', body: 'Start with impact, scope, and the next safe action. High-severity incidents should be acknowledged quickly and documented as you investigate.' };
   };
   const agentGuidance = getAgentGuidance();
+  const selectedIncident = incidents.find((incident) => incident._id === selectedIncidentId);
   const answerAgent = (question) => {
     const normalizedQuestion = question.toLowerCase();
     const highPriorityCount = incidents.filter((incident) => incident.severity === 'High' && incident.status !== 'Resolved').length;
@@ -308,8 +323,11 @@ function App() {
         <aside className="agent-panel">
           <div className="agent-avatar">AI</div>
           <p className="eyebrow accent">OPS GUIDE</p>
-          <h2>{agentGuidance.title}</h2>
+          <h2>{selectedIncident ? `Agent: ${selectedIncident.title}` : agentGuidance.title}</h2>
           <p>{agentGuidance.body}</p>
+          {selectedIncident && <div className="agent-context"><span>{selectedIncident.severity} / {selectedIncident.status}</span><strong>Raised by {selectedIncident.raisedBy || 'Legacy record'}</strong></div>}
+          {selectedIncident && <div className="agent-activity"><span className="eyebrow">LIVE WORK</span>{(selectedIncident.agentActivity || []).map((activity) => <div key={activity.step} className="activity-row"><b>✓</b><span>{activity.step}</span></div>)}{selectedIncident.agentState === 'analyzing' && <div className="activity-row running"><b>→</b><span>Agent is working...</span></div>}</div>}
+          {selectedIncident && <div className="agent-detail"><span>INCIDENT TIMELINE</span>{(selectedIncident.timeline || []).slice(-4).map((entry, index) => <div key={`${entry.event}-${index}`}><b>{new Date(entry.createdAt).toLocaleTimeString()}</b><p>{entry.event}</p></div>)}{selectedIncident.rootCause && <p><strong>Possible cause:</strong> {selectedIncident.rootCause}</p>}{selectedIncident.resolution && <p><strong>Recommendation:</strong> {selectedIncident.resolution}</p>}</div>}
           <div className="agent-answer"><span>LIVE ANSWER</span><p>{agentAnswer}</p></div>
           <form className="agent-form" onSubmit={handleAgentQuestion}><input aria-label="Ask operations assistant" value={agentQuestion} onChange={handleAgentInput} placeholder="Ask the ops agent..." /><button type="submit" title="Ask operations agent">Ask</button></form>
           <div className="agent-steps"><span>01</span><span>Assess impact</span><span>02</span><span>Document evidence</span><span>03</span><span>Confirm recovery</span></div>
@@ -431,6 +449,7 @@ function App() {
                       </p>
                       {incident.statusChangedBy && <p className="status-audit">Status changed by <strong>{incident.statusChangedBy}</strong>: {incident.statusChangeReason}</p>}
                       <div className="button-group">
+                        <button className="btn-agent" onClick={() => startAgent(incident._id)}>{incident.agentState === 'analyzing' ? 'Agent working' : 'Run agent'}</button>
                         <button
                           className="btn-edit"
                           onClick={() => handleStartEdit(incident)}

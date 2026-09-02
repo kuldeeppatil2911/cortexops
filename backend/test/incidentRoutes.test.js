@@ -101,3 +101,24 @@ test("incident API rejects invalid severity values", async () => {
   assert.equal(response.status, 500);
   assert.match(response.body.error, /enum/i);
 });
+
+test("new incidents automatically activate the agent and persist progress", async () => {
+  const createResponse = await api.post("/api/incidents").send({
+    title: "Checkout timeout",
+    raisedBy: "Riya Shah",
+    severity: "High",
+    knowledgeBase: "Fail over to the payment replica and verify checkout latency.",
+  });
+
+  assert.equal(createResponse.status, 201);
+
+  await new Promise((resolve) => setTimeout(resolve, 1700));
+  const detailResponse = await api.get(`/api/incidents/${createResponse.body._id}`);
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailResponse.body.agentState, "completed");
+  assert.equal(detailResponse.body.agentActivity.length, 4);
+  assert.match(detailResponse.body.timeline.map((entry) => entry.event).join(" "), /Agent activated/);
+  assert.match(detailResponse.body.resolution, /action was executed/);
+  assert.ok(emittedEvents.some((event) => event.event === "agent:started"));
+  assert.ok(emittedEvents.some((event) => event.event === "agent:progress"));
+});

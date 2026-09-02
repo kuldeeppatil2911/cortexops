@@ -19,6 +19,10 @@ Users can create incidents with a title, description, and severity, then monitor
 - Production server that serves both the API and built React app
 - Health endpoint for Render or other hosting platforms
 - Automated CRUD integration tests using an isolated in-memory MongoDB
+- Socket.IO live incident and agent progress updates
+- Automatic agent activation when an incident is created
+- Persisted agent activity, incident timeline, root-cause context, and recommendations
+- Separate active queue and resolved archive in the dashboard
 
 ## Technology Stack
 
@@ -34,29 +38,20 @@ Users can create incidents with a title, description, and severity, then monitor
 
 ```mermaid
 flowchart TD
-    ROOT[CortexOps Incident Management System]
-
-    ROOT --> CLIENT[Client Layer]
-    CLIENT --> BROWSER[User Browser]
-    BROWSER --> REACT[React Dashboard]
-    REACT --> UI[Forms, Filters, Metrics]
-
-    ROOT --> SERVER[Application Layer]
-    SERVER --> EXPRESS[Node.js + Express API]
-    EXPRESS --> ROUTES[Incident CRUD Routes]
-    ROUTES --> VALIDATION[Mongoose Validation]
-
-    ROOT --> DATA[Data Layer]
-    DATA --> MONGOOSE[Mongoose ODM]
-    MONGOOSE --> MONGO[(MongoDB Atlas)]
-
-    ROOT --> OPS[Operations Layer]
-    OPS --> RENDER[Render Web Service]
-    OPS --> DOCKER[Docker Configuration]
-    OPS --> HEALTH[Health Check: /api/health]
-
-    REACT -. HTTP JSON .-> EXPRESS
-    VALIDATION --> MONGOOSE
+    ROOT[CortexOps]
+    ROOT --> CLIENT[React Frontend]
+    CLIENT --> DASH[Dashboard, filters, resolved archive]
+    CLIENT --> AGENT_UI[Live agent panel and incident context]
+    ROOT --> API[Express REST API]
+    API --> INCIDENTS[Incident CRUD]
+    API --> AGENT[Agent workflow endpoint]
+    ROOT --> REALTIME[Socket.IO realtime layer]
+    REALTIME --> EVENTS[Created, updated, deleted, agent progress]
+    ROOT --> DATA[(MongoDB Atlas)]
+    DATA --> HISTORY[Timeline, activity, knowledge, resolution]
+    AGENT --> DATA
+    AGENT --> REALTIME
+    REALTIME --> CLIENT
 ```
 
 The production process runs `backend/server-prod.js`. It mounts the incident API under `/api/incidents`, serves the compiled files from `frontend/build`, and sends browser routes to the React entry page.
@@ -65,18 +60,15 @@ The production process runs `backend/server-prod.js`. It mounts the incident API
 
 ```mermaid
 flowchart TD
-    START[User submits incident form]
-    START --> STATE[React reads form state]
-    STATE --> REQUEST[POST /api/incidents]
-    REQUEST --> API[Express receives JSON request]
-    API --> ROUTE[Incident route handles request]
-    ROUTE --> MODEL[Mongoose creates document]
-    MODEL --> CHECK{Schema valid?}
-    CHECK -->|No| ERROR[Return 500 validation error]
-    CHECK -->|Yes| SAVE[(Save to MongoDB Atlas)]
-    SAVE --> RESPONSE[Return 201 incident JSON]
-    RESPONSE --> UPDATE[React updates dashboard]
-    UPDATE --> END[New incident visible to user]
+    DETECTED[Incident created]
+    DETECTED --> ACTIVATED[Agent activated automatically]
+    ACTIVATED --> HEALTH[Check service health]
+    HEALTH --> SIGNALS[Check incident signals]
+    SIGNALS --> KB[Search incident knowledge base]
+    KB --> RECOMMEND[Prepare recommendation]
+    RECOMMEND --> PERSIST[Persist activity and timeline]
+    PERSIST --> EVENT[Broadcast Socket.IO progress event]
+    EVENT --> UI[Update selected incident in every open dashboard]
 ```
 
 ## Data Model
@@ -85,10 +77,21 @@ flowchart TD
 Incident
 ├── _id: MongoDB ObjectId
 ├── title: required string
+├── raisedBy: required string
 ├── description: optional string
+├── knowledgeBase: incident-specific note
 ├── severity: Low | Medium | High
 ├── status: Open | In Progress | Resolved
-└── createdAt: date
+├── statusChangedBy: status transition actor
+├── statusChangeReason: required for transitions
+├── agentState: idle | analyzing | completed
+├── agentActivity[]: persisted investigation steps
+├── timeline[]: persisted incident events
+├── rootCause: evidence-based context
+├── resolution: recommendation and execution boundary
+├── resolvedAt: resolution timestamp
+├── createdAt: date
+└── updatedAt: date
 ```
 
 ## API Reference
@@ -103,6 +106,7 @@ Base URL: `/api`
 | `GET` | `/incidents/:id` | Fetch one incident |
 | `PUT` | `/incidents/:id` | Update an incident |
 | `DELETE` | `/incidents/:id` | Delete an incident |
+| `POST` | `/incidents/:id/agent/start` | Start an incident investigation manually |
 
 Example create request:
 
@@ -114,7 +118,45 @@ Example create request:
 }
 ```
 
-New incidents default to `Open`. Mongoose validates severity and status values before writing to MongoDB.
+New incidents default to `Open` and automatically activate the agent workflow. Status transitions require `statusChangedBy` and `statusChangeReason`. Mongoose validates severity and status values before writing to MongoDB.
+
+## Incident Lifecycle
+
+```mermaid
+flowchart TD
+    NEW[Open / new incident]
+    NEW --> INVESTIGATING[In Progress / investigation]
+    INVESTIGATING --> RESOLVED[Resolved after operator confirmation]
+    RESOLVED --> ARCHIVE[Resolved archive]
+    ARCHIVE --> HISTORY[Timeline and knowledge history retained]
+```
+
+The current API uses the existing `Open -> In Progress -> Resolved` states. Resolved incidents are never deleted or mixed into the active queue.
+
+## Live Agent And Guide
+
+The incident agent is a backend workflow, not a fake ChatGPT response. After creation, it persists and broadcasts these real steps:
+
+1. Check service health
+2. Check incident signals
+3. Search the incident knowledge-base note
+4. Prepare a recommendation
+
+The agent does not claim to execute production changes. Recommendations are stored separately from operator status changes. The Guide panel answers questions from the current incident counts, status, severity, and knowledge-base notes.
+
+## Realtime Events
+
+The Socket.IO server broadcasts:
+
+| Event | Trigger |
+| --- | --- |
+| `incident:created` | New incident saved |
+| `incident:updated` | Incident or agent state saved |
+| `incident:deleted` | Incident deleted |
+| `agent:started` | Investigation activated |
+| `agent:progress` | Investigation step persisted |
+
+Open dashboards reconcile these events immediately without a page refresh. On reconnect, the frontend reloads the REST list on page load, so persisted state remains the source of truth.
 
 ## Project Structure
 
@@ -217,16 +259,13 @@ https://cortexops-1.onrender.com
 
 ```mermaid
 flowchart TD
-    REPO[GitHub: main branch]
-    REPO --> BUILD[Render starts build]
-    BUILD --> DEPS[Install backend dependencies]
-    DEPS --> FRONTEND[Install frontend dependencies]
-    FRONTEND --> BUNDLE[Create React production bundle]
-    BUNDLE --> SERVER[Start backend/server-prod.js]
-    SERVER --> DB[Connect to MongoDB Atlas]
-    DB --> HEALTH{Health check: /api/health}
-    HEALTH -->|200 OK| LIVE[Service is live]
-    HEALTH -->|Failure| LOGS[Review Render logs]
+    Commit[Push commit to GitHub] --> Render[Render detects main branch]
+    Render --> Install[Install backend and frontend dependencies]
+    Install --> Build[Build React production bundle]
+    Build --> Start[Start server-prod.js]
+    Start --> Health{GET /api/health}
+    Health -->|200 OK| Live[Service marked live]
+    Health -->|Failure| Logs[Inspect Render deploy logs]
 ```
 
 ## Environment Variables
