@@ -8,10 +8,12 @@ const incidentRoutes = require("../routes/incidentRoutes");
 
 let mongoServer;
 let api;
+const emittedEvents = [];
 
 function createTestApp() {
   const app = express();
   app.use(express.json());
+  app.set("io", { emit: (event, payload) => emittedEvents.push({ event, payload }) });
   app.use("/api/incidents", incidentRoutes);
   return app;
 }
@@ -42,6 +44,7 @@ test("incident API supports the complete lifecycle", async () => {
   assert.equal(createResponse.body.status, "Open");
   assert.equal(createResponse.body.raisedBy, "Aarav Sharma");
   assert.match(createResponse.body.knowledgeBase, /replica/);
+  assert.equal(emittedEvents.at(-1).event, "incident:created");
   const incidentId = createResponse.body._id;
 
   const listResponse = await api.get("/api/incidents");
@@ -65,9 +68,11 @@ test("incident API supports the complete lifecycle", async () => {
   assert.equal(updateResponse.body.status, "Resolved");
   assert.equal(updateResponse.body.severity, "Medium");
   assert.match(updateResponse.body.knowledgeBase, /Recovery confirmed/);
+  assert.equal(emittedEvents.at(-1).event, "incident:updated");
 
   const deleteResponse = await api.delete(`/api/incidents/${incidentId}`);
   assert.equal(deleteResponse.status, 200);
+  assert.equal(emittedEvents.at(-1).event, "incident:deleted");
 
   const missingResponse = await api.get(`/api/incidents/${incidentId}`);
   assert.equal(missingResponse.status, 404);
