@@ -29,8 +29,12 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", service: "cortexops-api", timestamp: new Date().toISOString() });
 });
 
-// Catch-all for React Router (must be after API routes)
-app.get("*", (req, res) => {
+// Fallback for the React app (must be after API routes)
+app.use((req, res, next) => {
+  if (req.method !== "GET" || req.path.startsWith("/api/")) {
+    return next();
+  }
+
   res.sendFile(path.join(frontendBuildPath, "index.html"));
 });
 
