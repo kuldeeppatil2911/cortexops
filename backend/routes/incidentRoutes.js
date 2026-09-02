@@ -16,6 +16,8 @@ router.post("/", async (req, res) => {
     });
 
     const savedIncident = await newIncident.save();
+    const io = req.app.get("io");
+    if (io) io.emit("incident:created", savedIncident);
 
     res.status(201).json(savedIncident);
   } catch (error) {
@@ -67,6 +69,8 @@ router.put("/:id", async (req, res) => {
     if (!incident) {
       return res.status(404).json({ error: "Incident not found" });
     }
+    const io = req.app.get("io");
+    if (io) io.emit("incident:updated", incident);
     res.json(incident);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -80,6 +84,8 @@ router.delete("/:id", async (req, res) => {
     if (!incident) {
       return res.status(404).json({ error: "Incident not found" });
     }
+    const io = req.app.get("io");
+    if (io) io.emit("incident:deleted", { id: req.params.id });
     res.json({ message: "Incident deleted successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });

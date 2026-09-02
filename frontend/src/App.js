@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { io } from 'socket.io-client';
 import './App.css';
 
 function App() {
@@ -16,8 +17,10 @@ function App() {
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
 
   const API_BASE = `${process.env.REACT_APP_API_BASE_URL || ''}/api/incidents`;
+  const SOCKET_URL = process.env.REACT_APP_WS_URL || window.location.origin;
 
   // Fetch all incidents
   useEffect(() => {
@@ -38,6 +41,23 @@ function App() {
 
     loadIncidents();
   }, [API_BASE]);
+
+  useEffect(() => {
+    const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
+    socket.on('connect', () => setRealtimeConnected(true));
+    socket.on('disconnect', () => setRealtimeConnected(false));
+    socket.on('incident:created', (incident) => {
+      setIncidents((current) => [incident, ...current.filter((item) => item._id !== incident._id)]);
+    });
+    socket.on('incident:updated', (incident) => {
+      setIncidents((current) => current.map((item) => item._id === incident._id ? incident : item));
+    });
+    socket.on('incident:deleted', ({ id }) => {
+      setIncidents((current) => current.filter((item) => item._id !== id));
+    });
+
+    return () => socket.disconnect();
+  }, [SOCKET_URL]);
 
   // Handle form input change
   const handleInputChange = (e) => {
@@ -188,7 +208,7 @@ function App() {
           <p className="eyebrow">OPERATIONS CONTROL CENTER</p>
           <h1>CortexOps <span>Incident Management</span></h1>
         </div>
-        <div className="header-status"><span /> Systems operational</div>
+        <div className={`header-status ${realtimeConnected ? 'is-live' : ''}`}><span /> {realtimeConnected ? 'Live updates on' : 'Connecting live feed'}</div>
       </header>
 
       <div className="container">

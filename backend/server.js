@@ -1,6 +1,8 @@
 const express = require("express");
+const http = require("http");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 
 dotenv.config();
@@ -9,6 +11,9 @@ dotenv.config();
 connectDB();
 
 const app = express();
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, { cors: { origin: "*" } });
+app.set("io", io);
 
 app.use(cors());
 app.use(express.json());
@@ -25,6 +30,6 @@ app.get("/", (req, res) => {
 });
 
 const PORT = 5000;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
