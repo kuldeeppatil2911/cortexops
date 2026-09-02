@@ -33,11 +33,13 @@ test("incident API supports the complete lifecycle", async () => {
     title: "Database latency",
     description: "Primary database response time increased.",
     severity: "High",
+    knowledgeBase: "Check database connections and move traffic to the replica.",
   });
 
   assert.equal(createResponse.status, 201);
   assert.equal(createResponse.body.title, "Database latency");
   assert.equal(createResponse.body.status, "Open");
+  assert.match(createResponse.body.knowledgeBase, /replica/);
   const incidentId = createResponse.body._id;
 
   const listResponse = await api.get("/api/incidents");
@@ -53,10 +55,12 @@ test("incident API supports the complete lifecycle", async () => {
     description: "Traffic was moved to the replica.",
     severity: "Medium",
     status: "Resolved",
+    knowledgeBase: "Recovery confirmed after traffic was moved to the replica.",
   });
   assert.equal(updateResponse.status, 200);
   assert.equal(updateResponse.body.status, "Resolved");
   assert.equal(updateResponse.body.severity, "Medium");
+  assert.match(updateResponse.body.knowledgeBase, /Recovery confirmed/);
 
   const deleteResponse = await api.delete(`/api/incidents/${incidentId}`);
   assert.equal(deleteResponse.status, 200);

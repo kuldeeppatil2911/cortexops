@@ -5,12 +5,13 @@ const Incident = require("../model/Incident");
 // CREATE INCIDENT
 router.post("/", async (req, res) => {
   try {
-    const { title, description, severity } = req.body;
+    const { title, description, severity, knowledgeBase } = req.body;
 
     const newIncident = new Incident({
       title,
       description,
       severity,
+      knowledgeBase,
     });
 
     const savedIncident = await newIncident.save();
@@ -47,10 +48,10 @@ router.get("/:id", async (req, res) => {
 // UPDATE INCIDENT
 router.put("/:id", async (req, res) => {
   try {
-    const { title, description, severity, status } = req.body;
+    const { title, description, severity, status, knowledgeBase } = req.body;
     const incident = await Incident.findByIdAndUpdate(
       req.params.id,
-      { title, description, severity, status },
+      { title, description, severity, status, knowledgeBase },
       { new: true }
     );
     if (!incident) {

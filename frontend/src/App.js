@@ -6,7 +6,8 @@ function App() {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    severity: 'Low'
+    severity: 'Low',
+    knowledgeBase: ''
   });
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState({});
@@ -74,7 +75,7 @@ function App() {
 
       const newIncident = await response.json();
       setIncidents([newIncident, ...incidents]);
-      setFormData({ title: '', description: '', severity: 'Low' });
+      setFormData({ title: '', description: '', severity: 'Low', knowledgeBase: '' });
       setError('');
     } catch (err) {
       setError('Error creating incident: ' + err.message);
@@ -159,6 +160,24 @@ function App() {
   const openCount = incidents.filter((incident) => incident.status === 'Open').length;
   const inProgressCount = incidents.filter((incident) => incident.status === 'In Progress').length;
   const resolvedCount = incidents.filter((incident) => incident.status === 'Resolved').length;
+  const matchesIncident = (incident) => {
+    const matchesStatus = statusFilter === 'All' || incident.status === statusFilter;
+    const searchableText = `${incident.title} ${incident.description || ''} ${incident.knowledgeBase || ''}`.toLowerCase();
+    return matchesStatus && searchableText.includes(searchTerm.toLowerCase());
+  };
+  const activeIncidents = incidents.filter((incident) => incident.status !== 'Resolved' && matchesIncident(incident));
+  const resolvedIncidents = incidents.filter((incident) => incident.status === 'Resolved' && matchesIncident(incident));
+  const incidentGroups = [
+    { title: 'Active queue', count: activeIncidents.length, items: activeIncidents },
+    { title: 'Resolved archive', count: resolvedIncidents.length, items: resolvedIncidents }
+  ];
+
+  const getAgentGuidance = () => {
+    if (statusFilter === 'Resolved') return { title: 'Closeout checklist', body: 'Capture the fix, confirm monitoring is green, and link the knowledge-base note before closing the record.' };
+    if (statusFilter === 'In Progress') return { title: 'Investigation mode', body: 'Record the current hypothesis, add evidence to the knowledge base, and update the status when the next action is clear.' };
+    return { title: 'Triage assistant', body: 'Start with impact, scope, and the next safe action. High-severity incidents should be acknowledged quickly and documented as you investigate.' };
+  };
+  const agentGuidance = getAgentGuidance();
 
   return (
     <div className="App">
@@ -209,6 +228,13 @@ function App() {
               onChange={handleInputChange}
               rows="3"
             /></label>
+            <label>Knowledge base note<textarea
+              name="knowledgeBase"
+              placeholder="Runbook, fix, or prevention note"
+              value={formData.knowledgeBase}
+              onChange={handleInputChange}
+              rows="3"
+            /></label>
             <label>Severity<select
               name="severity"
               value={formData.severity}
@@ -222,6 +248,14 @@ function App() {
           </form>
         </div>
 
+        <aside className="agent-panel">
+          <div className="agent-avatar">AI</div>
+          <p className="eyebrow accent">OPS GUIDE</p>
+          <h2>{agentGuidance.title}</h2>
+          <p>{agentGuidance.body}</p>
+          <div className="agent-steps"><span>01</span><span>Assess impact</span><span>02</span><span>Document evidence</span><span>03</span><span>Confirm recovery</span></div>
+        </aside>
+
         <div className="incidents-section">
           <div className="section-heading list-heading"><div><p className="eyebrow accent">INCIDENT QUEUE</p><h2>Recent activity <span>{visibleIncidents.length}</span></h2></div><button className="refresh-button" onClick={() => window.location.reload()} title="Refresh incidents">↻ <span>Refresh</span></button></div>
           <div className="filters">
@@ -233,8 +267,11 @@ function App() {
           ) : visibleIncidents.length === 0 ? (
             <div className="empty-state"><strong>{incidents.length ? 'No matching incidents' : 'No incidents reported yet'}</strong><span>Try another filter or create a new event.</span></div>
           ) : (
-            <div className="incidents-grid">
-              {visibleIncidents.map(incident => (
+            <div className="queue-groups">
+              {incidentGroups.map((group) => group.items.length > 0 && <section className="queue-group" key={group.title}>
+                <div className="queue-group-heading"><h3>{group.title}</h3><span>{group.count}</span></div>
+                <div className="incidents-grid">
+              {group.items.map(incident => (
                 <div key={incident._id} className="incident-card">
                   {editingId === incident._id ? (
                     // Edit Mode
@@ -248,6 +285,13 @@ function App() {
                       <textarea
                         name="description"
                         value={editingData.description}
+                        onChange={handleEditChange}
+                        rows="2"
+                      />
+                      <textarea
+                        name="knowledgeBase"
+                        placeholder="Knowledge base note"
+                        value={editingData.knowledgeBase || ''}
                         onChange={handleEditChange}
                         rows="2"
                       />
@@ -289,6 +333,7 @@ function App() {
                     <>
                       <h3>{incident.title}</h3>
                       <p>{incident.description || 'No description'}</p>
+                      {incident.knowledgeBase && <div className="knowledge-base"><span>KB</span><p>{incident.knowledgeBase}</p></div>}
                       <div className="incident-meta">
                         <span
                           className="badge severity"
@@ -324,6 +369,8 @@ function App() {
                   )}
                 </div>
               ))}
+                </div>
+              </section>)}
             </div>
           )}
         </div>

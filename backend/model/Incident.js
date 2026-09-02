@@ -6,6 +6,11 @@ const incidentSchema = new mongoose.Schema({
     required: true,
   },
   description: String,
+  knowledgeBase: {
+    type: String,
+    trim: true,
+    default: "",
+  },
   severity: {
     type: String,
     enum: ["Low", "Medium", "High"],
