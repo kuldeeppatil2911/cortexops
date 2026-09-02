@@ -17,22 +17,23 @@ function App() {
 
   // Fetch all incidents
   useEffect(() => {
-    fetchIncidents();
-  }, []);
+    const loadIncidents = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(API_BASE);
+        const data = await response.json();
+        setIncidents(data);
+        setError('');
+      } catch (err) {
+        setError('Failed to fetch incidents');
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const fetchIncidents = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(API_BASE);
-      const data = await response.json();
-      setIncidents(data);
-      setError('');
-    } catch (err) {
-      setError('Failed to fetch incidents');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
+    loadIncidents();
+  }, [API_BASE]);
   };
 
   // Handle form input change
