@@ -18,6 +18,8 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [agentQuestion, setAgentQuestion] = useState('');
+  const [agentAnswer, setAgentAnswer] = useState('Ask about triage, status, or an incident.');
 
   const API_BASE = `${process.env.REACT_APP_API_BASE_URL || ''}/api/incidents`;
   const SOCKET_URL = process.env.REACT_APP_WS_URL || window.location.origin;
@@ -199,6 +201,32 @@ function App() {
     return { title: 'Triage assistant', body: 'Start with impact, scope, and the next safe action. High-severity incidents should be acknowledged quickly and documented as you investigate.' };
   };
   const agentGuidance = getAgentGuidance();
+  const answerAgent = (question) => {
+    const normalizedQuestion = question.toLowerCase();
+    const highPriorityCount = incidents.filter((incident) => incident.severity === 'High' && incident.status !== 'Resolved').length;
+    if (normalizedQuestion.includes('high') || normalizedQuestion.includes('urgent')) {
+      return `${highPriorityCount} high-severity incident${highPriorityCount === 1 ? '' : 's'} need attention. Acknowledge impact, assign an owner, and record the first mitigation step in the knowledge base.`;
+    }
+    if (normalizedQuestion.includes('resolve') || normalizedQuestion.includes('close')) {
+      return `To resolve an incident, choose Resolved, enter your name, add the reason for the status change, and confirm the recovery evidence in its knowledge-base note.`;
+    }
+    if (normalizedQuestion.includes('status') || normalizedQuestion.includes('progress')) {
+      return `${openCount} open and ${inProgressCount} in progress. Move an incident to In Progress only after recording who is taking ownership and why.`;
+    }
+    if (normalizedQuestion.includes('knowledge') || normalizedQuestion.includes('runbook') || normalizedQuestion.includes('fix')) {
+      return 'Use the knowledge-base note for the verified fix, useful commands, evidence, and prevention steps. Keep it short enough for the next responder to act on.';
+    }
+    return `There are ${incidents.length} incidents in the queue. Start with impact and scope, then document the next action. You can ask me about high priority, status, resolution, or the knowledge base.`;
+  };
+  const handleAgentQuestion = (event) => {
+    event.preventDefault();
+    setAgentAnswer(answerAgent(agentQuestion));
+  };
+  const handleAgentInput = (event) => {
+    const question = event.target.value;
+    setAgentQuestion(question);
+    if (question.trim()) setAgentAnswer(answerAgent(question));
+  };
 
   return (
     <div className="App">
@@ -234,7 +262,7 @@ function App() {
         <div className="form-section">
           <div className="section-heading"><div><p className="eyebrow accent">NEW EVENT</p><h2>Report incident</h2></div><span className="step-count">01</span></div>
           <form onSubmit={handleCreateIncident}>
-            <label>Incident title<input
+            <label><span>Incident title <b className="required-mark">*</b></span><input
               type="text"
               name="title"
               placeholder="Incident Title"
@@ -242,7 +270,7 @@ function App() {
               onChange={handleInputChange}
               required
             /></label>
-            <label>Raised by<input
+            <label><span>Raised by <b className="required-mark">*</b></span><input
               type="text"
               name="raisedBy"
               placeholder="Your name"
@@ -264,7 +292,7 @@ function App() {
               onChange={handleInputChange}
               rows="3"
             /></label>
-            <label>Severity<select
+            <label><span>Severity <b className="required-mark">*</b></span><select
               name="severity"
               value={formData.severity}
               onChange={handleInputChange}
@@ -282,6 +310,8 @@ function App() {
           <p className="eyebrow accent">OPS GUIDE</p>
           <h2>{agentGuidance.title}</h2>
           <p>{agentGuidance.body}</p>
+          <div className="agent-answer"><span>LIVE ANSWER</span><p>{agentAnswer}</p></div>
+          <form className="agent-form" onSubmit={handleAgentQuestion}><input aria-label="Ask operations assistant" value={agentQuestion} onChange={handleAgentInput} placeholder="Ask the ops agent..." /><button type="submit" title="Ask operations agent">Ask</button></form>
           <div className="agent-steps"><span>01</span><span>Assess impact</span><span>02</span><span>Document evidence</span><span>03</span><span>Confirm recovery</span></div>
         </aside>
 
@@ -343,22 +373,22 @@ function App() {
                         <option value="Resolved">Resolved</option>
                       </select>
                       {editingData.status !== incident.status && <>
-                        <input
+                        <label><span>Status changed by <b className="required-mark">*</b></span><input
                           type="text"
                           name="statusChangedBy"
                           placeholder="Name of person changing status"
                           value={editingData.statusChangedBy || ''}
                           onChange={handleEditChange}
                           required
-                        />
-                        <textarea
+                        /></label>
+                        <label><span>Why change status? <b className="required-mark">*</b></span><textarea
                           name="statusChangeReason"
                           placeholder="Why is the status changing?"
                           value={editingData.statusChangeReason || ''}
                           onChange={handleEditChange}
                           rows="2"
                           required
-                        />
+                        /></label>
                       </>}
                       <div className="button-group">
                         <button
