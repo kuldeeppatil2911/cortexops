@@ -12,6 +12,8 @@ function App() {
   const [editingData, setEditingData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
 
   const API_BASE = `${process.env.REACT_APP_API_BASE_URL || ''}/api/incidents`;
 
@@ -148,35 +150,66 @@ function App() {
     }
   };
 
+  const visibleIncidents = incidents.filter((incident) => {
+    const matchesStatus = statusFilter === 'All' || incident.status === statusFilter;
+    const searchableText = `${incident.title} ${incident.description || ''}`.toLowerCase();
+    return matchesStatus && searchableText.includes(searchTerm.toLowerCase());
+  });
+
+  const openCount = incidents.filter((incident) => incident.status === 'Open').length;
+  const inProgressCount = incidents.filter((incident) => incident.status === 'In Progress').length;
+  const resolvedCount = incidents.filter((incident) => incident.status === 'Resolved').length;
+
   return (
     <div className="App">
       <header className="App-header">
-        <h1>🚨 CortexOps Incident Management System</h1>
+        <div className="brand-mark">CO</div>
+        <div>
+          <p className="eyebrow">OPERATIONS CONTROL CENTER</p>
+          <h1>CortexOps <span>Incident Management</span></h1>
+        </div>
+        <div className="header-status"><span /> Systems operational</div>
       </header>
 
       <div className="container">
-        {error && <div className="error-message">{error}</div>}
+        <section className="hero-row">
+          <div>
+            <p className="eyebrow accent">LIVE OVERVIEW / {new Date().toLocaleDateString()}</p>
+            <h2>Keep every incident moving.</h2>
+            <p className="hero-copy">A focused command center for your team to report, triage, and close operational risk.</p>
+          </div>
+          <div className="hero-note"><strong>24/7</strong><span>Operational visibility</span></div>
+        </section>
 
-        {/* Create Incident Form */}
+        {error && <div className="error-message"><strong>Action needed</strong>{error}</div>}
+
+        <section className="stats-grid" aria-label="Incident summary">
+          <div className="stat-card stat-total"><span>Total incidents</span><strong>{incidents.length}</strong><small>All reported events</small></div>
+          <div className="stat-card stat-open"><span>Open</span><strong>{openCount}</strong><small>Needs attention</small></div>
+          <div className="stat-card stat-progress"><span>In progress</span><strong>{inProgressCount}</strong><small>Being investigated</small></div>
+          <div className="stat-card stat-resolved"><span>Resolved</span><strong>{resolvedCount}</strong><small>Closed successfully</small></div>
+        </section>
+
+        <section className="workspace-grid">
         <div className="form-section">
-          <h2>Report New Incident</h2>
+          <div className="section-heading"><div><p className="eyebrow accent">NEW EVENT</p><h2>Report incident</h2></div><span className="step-count">01</span></div>
           <form onSubmit={handleCreateIncident}>
-            <input
+            <label>Incident title<input
               type="text"
               name="title"
               placeholder="Incident Title"
               value={formData.title}
               onChange={handleInputChange}
               required
-            />
-            <textarea
+            /></label>
+            <label>What happened?<textarea
               name="description"
               placeholder="Description (optional)"
               value={formData.description}
               onChange={handleInputChange}
               rows="3"
-            />
-            <select
+            /></label>
+            <label>Severity<select
               name="severity"
               value={formData.severity}
               onChange={handleInputChange}
@@ -184,21 +217,24 @@ function App() {
               <option value="Low">Low</option>
               <option value="Medium">Medium</option>
               <option value="High">High</option>
-            </select>
-            <button type="submit" className="btn-primary">Create Incident</button>
+            </select></label>
+            <button type="submit" className="btn-primary"><span>+</span> Create incident</button>
           </form>
         </div>
 
-        {/* Incidents List */}
         <div className="incidents-section">
-          <h2>Incidents ({incidents.length})</h2>
+          <div className="section-heading list-heading"><div><p className="eyebrow accent">INCIDENT QUEUE</p><h2>Recent activity <span>{visibleIncidents.length}</span></h2></div><button className="refresh-button" onClick={() => window.location.reload()} title="Refresh incidents">↻ <span>Refresh</span></button></div>
+          <div className="filters">
+            <div className="search-wrap"><span>⌕</span><input aria-label="Search incidents" placeholder="Search incidents..." value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} /></div>
+            <select aria-label="Filter by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All</option><option>Open</option><option>In Progress</option><option>Resolved</option></select>
+          </div>
           {loading ? (
-            <p>Loading incidents...</p>
-          ) : incidents.length === 0 ? (
-            <p className="no-incidents">No incidents reported yet</p>
+            <div className="empty-state"><span className="loading-dot" /> Loading incident queue...</div>
+          ) : visibleIncidents.length === 0 ? (
+            <div className="empty-state"><strong>{incidents.length ? 'No matching incidents' : 'No incidents reported yet'}</strong><span>Try another filter or create a new event.</span></div>
           ) : (
             <div className="incidents-grid">
-              {incidents.map(incident => (
+              {visibleIncidents.map(incident => (
                 <div key={incident._id} className="incident-card">
                   {editingId === incident._id ? (
                     // Edit Mode
@@ -291,6 +327,7 @@ function App() {
             </div>
           )}
         </div>
+        </section>
       </div>
     </div>
   );
