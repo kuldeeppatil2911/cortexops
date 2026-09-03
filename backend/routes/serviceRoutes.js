@@ -1,5 +1,6 @@
 const express = require("express");
 const Service = require("../model/Service");
+const { runServiceCheck } = require("../services/healthMonitor");
 
 const router = express.Router();
 
@@ -36,6 +37,39 @@ router.get("/:id", async (req, res) => {
     res.json(service);
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+router.get("/:id/health", async (req, res) => {
+  try {
+    const service = await Service.findById(req.params.id);
+    if (!service) return res.status(404).json({ error: "Service not found" });
+    res.json({
+      serviceId: service._id,
+      name: service.name,
+      status: service.status,
+      lastCheckedAt: service.lastCheckedAt,
+      lastSuccessfulCheckAt: service.lastSuccessfulCheckAt,
+      lastFailedCheckAt: service.lastFailedCheckAt,
+      responseTimeMs: service.lastResponseTimeMs,
+      httpStatus: service.lastHttpStatus,
+      error: service.lastCheckError,
+      availability: service.availability,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.post("/:id/health/check", async (req, res) => {
+  try {
+    const service = await runServiceCheck(req.params.id);
+    if (!service) return res.status(404).json({ error: "Service not found" });
+    broadcast(req, "service:health", service);
+    broadcast(req, "service:updated", service);
+    res.json(service);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

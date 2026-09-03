@@ -5,6 +5,7 @@ const dotenv = require("dotenv");
 const path = require("path");
 const { Server } = require("socket.io");
 const connectDB = require("./config/db");
+const { startHealthMonitor } = require("./services/healthMonitor");
 
 dotenv.config();
 
@@ -57,4 +58,7 @@ httpServer.listen(PORT, () => {
   console.log(`🚀 CortexOps running on port ${PORT}`);
   console.log(`Frontend: http://localhost:${PORT}`);
   console.log(`API: http://localhost:${PORT}/api`);
+  if (process.env.HEALTH_MONITOR_ENABLED !== "false") {
+    startHealthMonitor({ io, intervalMs: Number(process.env.HEALTH_CHECK_INTERVAL_MS) || 60000 });
+  }
 });

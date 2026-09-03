@@ -4,6 +4,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const { Server } = require("socket.io");
 const connectDB = require("./config/db");
+const { startHealthMonitor } = require("./services/healthMonitor");
 
 dotenv.config();
 
@@ -34,4 +35,7 @@ app.get("/", (req, res) => {
 const PORT = 5000;
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  if (process.env.HEALTH_MONITOR_ENABLED !== "false") {
+    startHealthMonitor({ io, intervalMs: Number(process.env.HEALTH_CHECK_INTERVAL_MS) || 60000 });
+  }
 });
