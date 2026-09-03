@@ -23,6 +23,7 @@ Users can create incidents with a title, description, and severity, then monitor
 - Automatic agent activation when an incident is created
 - Persisted agent activity, incident timeline, root-cause context, and recommendations
 - Separate active queue and resolved archive in the dashboard
+- Service Registry for monitored service ownership and dependencies
 
 ## Technology Stack
 
@@ -107,6 +108,11 @@ Base URL: `/api`
 | `PUT` | `/incidents/:id` | Update an incident |
 | `DELETE` | `/incidents/:id` | Delete an incident |
 | `POST` | `/incidents/:id/agent/start` | Start an incident investigation manually |
+| `GET` | `/services` | List registered services |
+| `POST` | `/services` | Register a service |
+| `GET` | `/services/:id` | Fetch one service |
+| `PUT` | `/services/:id` | Update a service |
+| `DELETE` | `/services/:id` | Remove a service |
 
 Example create request:
 
@@ -132,6 +138,20 @@ flowchart TD
 ```
 
 The current API uses the existing `Open -> In Progress -> Resolved` states. Resolved incidents are never deleted or mixed into the active queue.
+
+## Service Registry
+
+Phase 1 adds a database-backed service catalog. Each registered service stores its name, description, environment, health endpoint, owner, operational status, and dependency list. The frontend Services page uses the same REST and Socket.IO layers as incidents, so changes made in one open dashboard appear in other connected dashboards.
+
+```mermaid
+flowchart TD
+    Registry[Service Registry]
+    Registry --> ServiceModel[Service model]
+    ServiceModel --> ServiceData[(MongoDB Atlas)]
+    Registry --> ServiceAPI[/api/services CRUD]
+    ServiceAPI --> Socket[Socket.IO service events]
+    Socket --> Dashboard[Services page and Overview health panel]
+```
 
 ## Live Agent And Guide
 
@@ -165,8 +185,11 @@ cortexops/
 ├── backend/
 │   ├── config/db.js                 # MongoDB connection
 │   ├── model/Incident.js            # Incident schema and validation
+│   ├── model/Service.js             # Service Registry schema
 │   ├── routes/incidentRoutes.js     # CRUD API routes
+│   ├── routes/serviceRoutes.js      # Service Registry API routes
 │   ├── test/incidentRoutes.test.js  # Integration tests
+│   ├── test/serviceRoutes.test.js   # Service Registry tests
 │   ├── server.js                    # Local API server
 │   └── server-prod.js               # Production API + static server
 ├── frontend/
@@ -232,7 +255,7 @@ node --check backend/server-prod.js
 node --check backend/config/db.js
 ```
 
-The test suite creates a temporary MongoDB instance, exercises the complete create/list/get/update/delete lifecycle, verifies missing-resource behavior, and confirms invalid severity values are rejected. It does not modify MongoDB Atlas data.
+The test suite creates a temporary MongoDB instance, exercises incident and Service Registry create/list/get/update/delete lifecycles, verifies missing-resource behavior, validates required fields, and confirms realtime event emission. It does not modify MongoDB Atlas data.
 
 ## Production Deployment
 

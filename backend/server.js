@@ -20,8 +20,10 @@ app.use(express.json());
 
 //connecting incidnet here
 const incidentRoutes = require("./routes/incidentRoutes");
+const serviceRoutes = require("./routes/serviceRoutes");
 
 app.use("/api/incidents", incidentRoutes);
+app.use("/api/services", serviceRoutes);
 ////////
 
 

@@ -30,7 +30,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // API Routes
 const incidentRoutes = require("./routes/incidentRoutes");
+const serviceRoutes = require("./routes/serviceRoutes");
 app.use("/api/incidents", incidentRoutes);
+app.use("/api/services", serviceRoutes);
 
 // Serve React frontend
 const frontendBuildPath = path.join(__dirname, "..", "frontend", "build");
